@@ -92,6 +92,7 @@ public:
     QWebSocketProtocol::Version version() const;
     QString resourceName() const;
     QUrl requestUrl() const;
+    QNetworkRequest request() const;
     QString origin() const;
     QWebSocketProtocol::CloseCode closeCode() const;
     QString closeReason() const;
@@ -109,6 +110,7 @@ public Q_SLOTS:
     void close(QWebSocketProtocol::CloseCode closeCode = QWebSocketProtocol::CloseCodeNormal,
                const QString &reason = QString());
     void open(const QUrl &url);
+    void open(const QNetworkRequest &request);
     void ping(const QByteArray &payload = QByteArray());
 #ifndef QT_NO_SSL
     void ignoreSslErrors();

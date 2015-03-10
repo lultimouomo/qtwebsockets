@@ -88,7 +88,7 @@ QWebSocketPrivate::QWebSocketPrivate(const QString &origin, QWebSocketProtocol::
     m_errorString(),
     m_version(version),
     m_resourceName(),
-    m_requestUrl(),
+    m_request(),
     m_origin(origin),
     m_protocol(),
     m_extension(),
@@ -120,7 +120,7 @@ QWebSocketPrivate::QWebSocketPrivate(QTcpSocket *pTcpSocket, QWebSocketProtocol:
     m_errorString(pTcpSocket->errorString()),
     m_version(version),
     m_resourceName(),
-    m_requestUrl(),
+    m_request(),
     m_origin(),
     m_protocol(),
     m_extension(),
@@ -280,9 +280,15 @@ QWebSocket *QWebSocketPrivate::upgradeFrom(QTcpSocket *pTcpSocket,
 {
     QWebSocket *pWebSocket = new QWebSocket(pTcpSocket, response.acceptedVersion(), parent);
     if (Q_LIKELY(pWebSocket)) {
+        QNetworkRequest netRequest(request.requestUrl());
+        QMapIterator<QString, QString> headerIter(request.headers());
+        while (headerIter.hasNext()) {
+            headerIter.next();
+            netRequest.setRawHeader(headerIter.key().toLatin1(), headerIter.value().toLatin1());
+        }
         pWebSocket->d_func()->setExtension(response.acceptedExtension());
         pWebSocket->d_func()->setOrigin(request.origin());
-        pWebSocket->d_func()->setRequestUrl(request.requestUrl());
+        pWebSocket->d_func()->setRequest(netRequest);
         pWebSocket->d_func()->setProtocol(response.acceptedProtocol());
         pWebSocket->d_func()->setResourceName(request.requestUrl().toString(QUrl::RemoveUserInfo));
         //a server should not send masked frames
@@ -329,12 +335,13 @@ void QWebSocketPrivate::close(QWebSocketProtocol::CloseCode closeCode, QString r
 /*!
     \internal
  */
-void QWebSocketPrivate::open(const QUrl &url, bool mask)
+void QWebSocketPrivate::open(const QNetworkRequest &request, bool mask)
 {
     //just delete the old socket for the moment;
     //later, we can add more 'intelligent' handling by looking at the URL
     //m_pSocket.reset();
     Q_Q(QWebSocket);
+    QUrl url = request.url();
     if (!url.isValid() || url.toString().contains(QStringLiteral("\r\n"))) {
         setErrorString(QWebSocket::tr("Invalid URL."));
         Q_EMIT q->error(QAbstractSocket::ConnectionRefusedError);
@@ -351,10 +358,10 @@ void QWebSocketPrivate::open(const QUrl &url, bool mask)
         m_isClosingHandshakeReceived = false;
         m_isClosingHandshakeSent = false;
 
-        setRequestUrl(url);
+        setRequest(request);
         QString resourceName = url.path();
         if (resourceName.contains(QStringLiteral("\r\n"))) {
-            setRequestUrl(QUrl());  //clear requestUrl
+            setRequest(QNetworkRequest());  //clear request
             setErrorString(QWebSocket::tr("Invalid resource name."));
             Q_EMIT q->error(QAbstractSocket::ConnectionRefusedError);
             return;
@@ -472,10 +479,10 @@ void QWebSocketPrivate::setResourceName(const QString &resourceName)
 /*!
   \internal
  */
-void QWebSocketPrivate::setRequestUrl(const QUrl &requestUrl)
+void QWebSocketPrivate::setRequest(const QNetworkRequest &request)
 {
-    if (m_requestUrl != requestUrl)
-        m_requestUrl = requestUrl;
+    if (m_request != request)
+        m_request = request;
 }
 
 /*!
@@ -609,9 +616,9 @@ QString QWebSocketPrivate::resourceName() const
 /*!
     \internal
  */
-QUrl QWebSocketPrivate::requestUrl() const
+QNetworkRequest QWebSocketPrivate::request() const
 {
-    return m_requestUrl;
+    return m_request;
 }
 
 /*!
@@ -1031,15 +1038,23 @@ void QWebSocketPrivate::processStateChanged(QAbstractSocket::SocketState socketS
     case QAbstractSocket::ConnectedState:
         if (webSocketState == QAbstractSocket::ConnectingState) {
             m_key = generateKey();
+
+            QList<QPair<QString, QString> > headers;
+            foreach (const QByteArray &key, m_request.rawHeaderList()) {
+                headers << qMakePair(QString::fromLatin1(key),
+                                     QString::fromLatin1(m_request.rawHeader(key)));
+            }
+
             const QString handshake =
                     createHandShakeRequest(m_resourceName,
-                                           m_requestUrl.host()
+                                           m_request.url().host()
                                                 % QStringLiteral(":")
-                                                % QString::number(m_requestUrl.port(80)),
+                                                % QString::number(m_request.url().port(80)),
                                            origin(),
                                            QString(),
                                            QString(),
-                                           m_key);
+                                           m_key,
+                                           headers);
             if (handshake.isEmpty()) {
                 m_pSocket->abort();
                 Q_EMIT q->error(QAbstractSocket::ConnectionRefusedError);
@@ -1131,7 +1146,8 @@ QString QWebSocketPrivate::createHandShakeRequest(QString resourceName,
                                                   QString origin,
                                                   QString extensions,
                                                   QString protocols,
-                                                  QByteArray key)
+                                                  QByteArray key,
+                                                  QList<QPair<QString, QString> > headers)
 {
     QStringList handshakeRequest;
     if (resourceName.contains(QStringLiteral("\r\n"))) {
@@ -1173,6 +1189,11 @@ QString QWebSocketPrivate::createHandShakeRequest(QString resourceName,
         handshakeRequest << QStringLiteral("Sec-WebSocket-Extensions: ") % extensions;
     if (protocols.length() > 0)
         handshakeRequest << QStringLiteral("Sec-WebSocket-Protocol: ") % protocols;
+
+    typedef QPair<QString, QString> Header;
+    foreach (const Header &header, headers)
+        handshakeRequest << header.first % QStringLiteral(": ") % header.second;
+
     handshakeRequest << QStringLiteral("\r\n");
 
     return handshakeRequest.join(QStringLiteral("\r\n"));
