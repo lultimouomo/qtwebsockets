@@ -360,7 +360,7 @@ void QWebSocketPrivate::open(const QNetworkRequest &request, bool mask)
         m_isClosingHandshakeSent = false;
 
         setRequest(request);
-        QString resourceName = url.path();
+        QString resourceName = url.path(QUrl::FullyEncoded);
         if (resourceName.contains(QStringLiteral("\r\n"))) {
             setRequest(QNetworkRequest());  //clear request
             setErrorString(QWebSocket::tr("Invalid resource name."));
